@@ -1,5 +1,6 @@
 package com.yage.yadada.controller;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yage.yadada.annotation.AuthCheck;
 import com.yage.yadada.common.BaseResponse;
@@ -9,10 +10,7 @@ import com.yage.yadada.common.ResultUtils;
 import com.yage.yadada.constant.UserConstant;
 import com.yage.yadada.exception.BusinessException;
 import com.yage.yadada.exception.ThrowUtils;
-import com.yage.yadada.model.dto.question.QuestionAddRequest;
-import com.yage.yadada.model.dto.question.QuestionEditRequest;
-import com.yage.yadada.model.dto.question.QuestionQueryRequest;
-import com.yage.yadada.model.dto.question.QuestionUpdateRequest;
+import com.yage.yadada.model.dto.question.*;
 import com.yage.yadada.model.entity.Question;
 import com.yage.yadada.model.entity.User;
 import com.yage.yadada.model.vo.QuestionVO;
@@ -24,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.util.List;
 
 /**
  * 题目表接口
@@ -54,9 +53,11 @@ public class QuestionController {
     @PostMapping("/add")
     public BaseResponse<Long> addQuestion(@RequestBody QuestionAddRequest questionAddRequest, HttpServletRequest request) {
         ThrowUtils.throwIf(questionAddRequest == null, ErrorCode.PARAMS_ERROR);
-        // todo 在此处将实体类和 DTO 进行转换
+        //在此处将实体类QuestionAddRequest和 DTO进行转换
         Question question = new Question();
         BeanUtils.copyProperties(questionAddRequest, question);
+        List<QuestionContentDTO> questionContentDTO = questionAddRequest.getQuestionContent();
+        question.setQuestionContent(JSONUtil.toJsonStr(questionContentDTO));
         // 数据校验
         questionService.validQuestion(question, true);
         // todo 填充默认值

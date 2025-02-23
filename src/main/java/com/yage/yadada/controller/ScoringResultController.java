@@ -1,5 +1,6 @@
 package com.yage.yadada.controller;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yage.yadada.annotation.AuthCheck;
 import com.yage.yadada.common.BaseResponse;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.util.List;
 
 /**
  * 评分结果表接口
@@ -57,9 +59,13 @@ public class ScoringResultController {
         // todo 在此处将实体类和 DTO 进行转换
         ScoringResult scoringResult = new ScoringResult();
         BeanUtils.copyProperties(scoringResultAddRequest, scoringResult);
+
+        List<String> resultProp = scoringResultAddRequest.getResultProp();
+        scoringResult.setResultProp(JSONUtil.toJsonStr(resultProp));
+
         // 数据校验
         scoringResultService.validScoringResult(scoringResult, true);
-        // todo 填充默认值
+        // 填充默认值
         User loginUser = userService.getLoginUser(request);
         scoringResult.setUserId(loginUser.getId());
         // 写入数据库
@@ -109,9 +115,12 @@ public class ScoringResultController {
         if (scoringResultUpdateRequest == null || scoringResultUpdateRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        // todo 在此处将实体类和 DTO 进行转换
         ScoringResult scoringResult = new ScoringResult();
         BeanUtils.copyProperties(scoringResultUpdateRequest, scoringResult);
+        // todo 在此处将实体类和 DTO 进行转换
+        List<String> resultProp = scoringResultUpdateRequest.getResultProp();
+        scoringResult.setResultProp(JSONUtil.toJsonStr(resultProp));
+
         // 数据校验
         scoringResultService.validScoringResult(scoringResult, false);
         // 判断是否存在
@@ -215,9 +224,14 @@ public class ScoringResultController {
         if (scoringResultEditRequest == null || scoringResultEditRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
+
+
         // todo 在此处将实体类和 DTO 进行转换
         ScoringResult scoringResult = new ScoringResult();
         BeanUtils.copyProperties(scoringResultEditRequest, scoringResult);
+        List<String> resultProp = scoringResultEditRequest.getResultProp();
+        scoringResult.setResultProp(JSONUtil.toJsonStr(resultProp));
+
         // 数据校验
         scoringResultService.validScoringResult(scoringResult, false);
         User loginUser = userService.getLoginUser(request);
