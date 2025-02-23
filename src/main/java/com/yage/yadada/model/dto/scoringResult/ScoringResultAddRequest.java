@@ -6,7 +6,7 @@ import java.io.Serializable;
 import java.util.List;
 
 /**
- * 创建评分结果表请求
+ * 创建评分结果请求
  *
  * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
  * @from <a href="https://www.code-nav.cn">编程导航学习圈</a>
@@ -15,19 +15,34 @@ import java.util.List;
 public class ScoringResultAddRequest implements Serializable {
 
     /**
-     * 标题
+     * 结果名称，如物流师
      */
-    private String title;
+    private String resultName;
 
     /**
-     * 内容
+     * 结果描述
      */
-    private String content;
+    private String resultDesc;
 
     /**
-     * 标签列表
+     * 结果图片
      */
-    private List<String> tags;
+    private String resultPicture;
+
+    /**
+     * 结果属性集合 JSON，如 [I,S,T,J]
+     */
+    private List<String> resultProp;
+
+    /**
+     * 结果得分范围，如 80，表示 80及以上的分数命中此结果
+     */
+    private Integer resultScoreRange;
+
+    /**
+     * 应用 id
+     */
+    private Long appId;
 
     private static final long serialVersionUID = 1L;
 }
