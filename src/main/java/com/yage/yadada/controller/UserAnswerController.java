@@ -14,12 +14,17 @@ import com.yage.yadada.model.dto.userAnswer.UserAnswerAddRequest;
 import com.yage.yadada.model.dto.userAnswer.UserAnswerEditRequest;
 import com.yage.yadada.model.dto.userAnswer.UserAnswerQueryRequest;
 import com.yage.yadada.model.dto.userAnswer.UserAnswerUpdateRequest;
+import com.yage.yadada.model.entity.App;
 import com.yage.yadada.model.entity.UserAnswer;
 import com.yage.yadada.model.entity.User;
+import com.yage.yadada.model.enums.ReviewStatusEnum;
 import com.yage.yadada.model.vo.UserAnswerVO;
+import com.yage.yadada.scoring.ScoringStrategyExecutor;
+import com.yage.yadada.service.AppService;
 import com.yage.yadada.service.UserAnswerService;
 import com.yage.yadada.service.UserService;
 import lombok.extern.slf4j.Slf4j;
+import net.bytebuddy.implementation.bytecode.Throw;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,7 +47,15 @@ public class UserAnswerController {
     private UserAnswerService userAnswerService;
 
     @Resource
+    private AppService appService;
+
+
+    @Resource
     private UserService userService;
+
+    @Resource
+    private ScoringStrategyExecutor scoringStrategyExecutor;
+
 
     // region 增删改查
 
@@ -64,6 +77,13 @@ public class UserAnswerController {
 
         // 数据校验
         userAnswerService.validUserAnswer(userAnswer, true);
+        //判断app是否存在
+        Long appId = userAnswerAddRequest.getAppId();
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR);
+        if (!ReviewStatusEnum.getEnumByValue(app.getReviewStatus()).equals(ReviewStatusEnum.PASS)) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "应用未通过审核");
+        }
         // todo 填充默认值
         User loginUser = userService.getLoginUser(request);
         userAnswer.setUserId(loginUser.getId());
@@ -72,6 +92,19 @@ public class UserAnswerController {
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         // 返回新写入的数据 id
         long newUserAnswerId = userAnswer.getId();
+
+        // 调用评分模块
+        //Long appId = userAnswer.getAppId();
+
+        try {
+            UserAnswer newAnswerWithResult = scoringStrategyExecutor.doScore(choices, app);
+            newAnswerWithResult.setId(newUserAnswerId);
+            userAnswerService.updateById(newAnswerWithResult);
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "评分错误");
+        }
+
         return ResultUtils.success(newUserAnswerId);
     }
 
@@ -174,7 +207,7 @@ public class UserAnswerController {
      */
     @PostMapping("/list/page/vo")
     public BaseResponse<Page<UserAnswerVO>> listUserAnswerVOByPage(@RequestBody UserAnswerQueryRequest userAnswerQueryRequest,
-                                                               HttpServletRequest request) {
+                                                                   HttpServletRequest request) {
         long current = userAnswerQueryRequest.getCurrent();
         long size = userAnswerQueryRequest.getPageSize();
         // 限制爬虫
@@ -195,7 +228,7 @@ public class UserAnswerController {
      */
     @PostMapping("/my/list/page/vo")
     public BaseResponse<Page<UserAnswerVO>> listMyUserAnswerVOByPage(@RequestBody UserAnswerQueryRequest userAnswerQueryRequest,
-                                                                 HttpServletRequest request) {
+                                                                     HttpServletRequest request) {
         ThrowUtils.throwIf(userAnswerQueryRequest == null, ErrorCode.PARAMS_ERROR);
         // 补充查询条件，只查询当前登录用户的数据
         User loginUser = userService.getLoginUser(request);
