@@ -1,5 +1,6 @@
 package com.yage.yadada;
 
+import com.zhipu.oapi.ClientV4;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
@@ -14,6 +15,6 @@ class MainApplicationTests {
 
     @Test
     void contextLoads() {
-    }
 
+    }
 }

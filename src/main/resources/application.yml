@@ -74,3 +74,6 @@ knife4j:
         api-rule: package
         api-rule-resources:
           - com.yage.yadada.controller
+# AI配置
+ai:
+  apikey: af79be0c76564518ac50d9bd7461208d.e2imsxe7Fir41vbR
