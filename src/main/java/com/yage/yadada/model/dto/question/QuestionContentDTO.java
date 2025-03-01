@@ -4,12 +4,13 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.Serializable;
 import java.util.List;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class QuestionContentDTO {
+public class QuestionContentDTO implements Serializable {
 
     /**
      * 题目标题
@@ -27,7 +28,7 @@ public class QuestionContentDTO {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class Option {
+    public static class Option implements Serializable{
         private String result;
         private int score;
         private String value;

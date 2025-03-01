@@ -1,7 +1,11 @@
 package com.yage.yadada.controller;
 
+import cn.hutool.json.JSON;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yage.yadada.annotation.AuthCheck;
 import com.yage.yadada.common.BaseResponse;
 import com.yage.yadada.common.DeleteRequest;
@@ -10,19 +14,29 @@ import com.yage.yadada.common.ResultUtils;
 import com.yage.yadada.constant.UserConstant;
 import com.yage.yadada.exception.BusinessException;
 import com.yage.yadada.exception.ThrowUtils;
+import com.yage.yadada.manager.AiManager;
 import com.yage.yadada.model.dto.question.*;
+import com.yage.yadada.model.entity.App;
 import com.yage.yadada.model.entity.Question;
 import com.yage.yadada.model.entity.User;
+import com.yage.yadada.model.enums.AppTypeEnum;
 import com.yage.yadada.model.vo.QuestionVO;
+import com.yage.yadada.service.AppService;
 import com.yage.yadada.service.QuestionService;
 import com.yage.yadada.service.UserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 题目表接口
@@ -40,6 +54,12 @@ public class QuestionController {
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private AppService appService;
+
+    @Resource
+    private AiManager aiManager;
 
     // region 增删改查
 
@@ -236,5 +256,118 @@ public class QuestionController {
         return ResultUtils.success(true);
     }
 
+    // endregion
+
+    // region AI 生成题目功能
+
+    // 系统引导提示词
+    private static final String GENERATE_QUESTION_SYSTEM_MESSAGE = "你是一位严谨的出题专家，我会给你如下信息：\n" +
+            "```\n" +
+            "应用名称，\n" +
+            "【【【应用描述】】】，\n" +
+            "应用类别，\n" +
+            "要生成的题目数，\n" +
+            "每个题目的选项数\n" +
+            "```\n" +
+            "\n" +
+            "请你根据上述信息，按照以下步骤来出题：\n" +
+            "1. 要求：题目和选项尽可能地短，题目不要包含序号，每题的选项数以我提供的为主，题目不能重复\n" +
+            "2. 严格按照下面的 json 格式输出题目和选项\n" +
+            "```\n" +
+            "[{\"options\":[{\"value\":\"选项内容\",\"key\":\"A\"},{\"value\":\"\",\"key\":\"B\"}],\"title\":\"题目标题\"}]\n" +
+            "```\n" +
+            "title 是题目，options 是选项，每个选项的 key 按照英文字母序（比如 A、B、C、D）以此类推，value 是选项内容\n" +
+            "3. 检查题目是否包含序号，若包含序号则去除序号\n" +
+            "4. 返回的题目列表格式必须为 JSON 数组";
+
+    // 用户引导提示词，接受参数使用函数生成
+
+    /**
+     * 生成题目的用户消息
+     * MBTI 性格测试，
+     * 【【【快来测测你的 MBTI 性格】】】，
+     * 测评类，
+     * 10，
+     * 3
+     *
+     * @param app
+     * @param questionNumber
+     * @param optionNumber
+     * @return
+     */
+    private String getGenerateQuestionUserMessage(App app, int questionNumber, int optionNumber) {
+        StringBuilder userMessage = new StringBuilder();
+        userMessage.append(app.getAppName()).append("\n");
+        userMessage.append(app.getAppDesc()).append("\n");
+        userMessage.append(AppTypeEnum.getEnumByValue(app.getAppType()).getText() + "类").append("\n");
+        userMessage.append(questionNumber).append("\n");
+        userMessage.append(optionNumber);
+        return userMessage.toString();
+    }
+
+    //    @PostMapping("/ai_generate")
+//    public BaseResponse<List<QuestionContentDTO>> aiGenerateQuestion(@RequestBody AiGenerateQuestionRequest aiGenerateQuestionRequest) {
+//       ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
+//
+//        // 获取参数
+//        Long appId = aiGenerateQuestionRequest.getAppId();
+//        int questionNumber = aiGenerateQuestionRequest.getQuestionNumber();
+//        int optionNumber = aiGenerateQuestionRequest.getOptionNumber();
+//
+//        // 获取应用信息
+//        App app = appService.getById(appId);
+//        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR);
+//
+//        // 封装 Prompt
+//        String userMessage = getGenerateQuestionUserMessage(app, questionNumber, optionNumber);
+//
+//        // Ai 生成
+//        String result = aiManager.doSyncStableRequest(GENERATE_QUESTION_SYSTEM_MESSAGE, userMessage);
+//
+//        int start = result.indexOf("[");
+//        int end = result.lastIndexOf("]");
+//        String json = result.substring(start, end + 1);
+//        System.out.println(json);
+//        List<QuestionContentDTO> questionContentOTOList = JSONUtil.toList(json, QuestionContentDTO.class);
+//        return ResultUtils.success(questionContentOTOList);
+//    }
+    @Autowired
+    private ObjectMapper objectMapper; // Spring Boot 自动配置的实例
+
+    @PostMapping("/ai_generate")
+    public BaseResponse<List<QuestionContentDTO>> aiGenerateQuestion(
+            @RequestBody AiGenerateQuestionRequest aiGenerateQuestionRequest) throws JsonProcessingException {
+        ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
+        // 获取参数
+        Long appId = aiGenerateQuestionRequest.getAppId();
+        int questionNumber = aiGenerateQuestionRequest.getQuestionNumber();
+        int optionNumber = aiGenerateQuestionRequest.getOptionNumber();
+        // 获取应用信息
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR);
+        // 封装 Prompt
+        String userMessage = getGenerateQuestionUserMessage(app, questionNumber, optionNumber);
+        // AI 生成
+        String result = aiManager.doSyncRequest(GENERATE_QUESTION_SYSTEM_MESSAGE, userMessage, null);
+
+        //截取需要的 JSON 信息,否者会报错
+        JSONObject resultJson = JSONUtil.parseObj(result);
+        result = (String) ((JSONObject) resultJson.get("message")).get("content");
+        System.out.println(result);
+
+        int start = result.indexOf("[");
+        int end = result.lastIndexOf("]");
+
+        String json = result.substring(start, end + 1);
+        System.out.println(json);
+
+        // 校验并解析
+        if (!JSONUtil.isJsonArray(json)) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 返回 JSON 格式错误");
+        }
+
+        List<QuestionContentDTO> questionContentDTOList = JSONUtil.toList(json, QuestionContentDTO.class);
+        return ResultUtils.success(questionContentDTOList);
+    }
     // endregion
 }

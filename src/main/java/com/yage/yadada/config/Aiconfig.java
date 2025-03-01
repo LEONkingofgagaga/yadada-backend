@@ -30,7 +30,7 @@ public class Aiconfig
     public ClientV4 getClientV4()
     {
         return new ClientV4.Builder(apikey)
-                .networkConfig(30 ,60, 60, 60 , TimeUnit.SECONDS)
+               .networkConfig(30 ,60, 60, 60 , TimeUnit.SECONDS)
                 .build();
     }
 }
