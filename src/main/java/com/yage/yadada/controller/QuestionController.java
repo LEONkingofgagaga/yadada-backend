@@ -1,8 +1,10 @@
 package com.yage.yadada.controller;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSON;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,17 +26,23 @@ import com.yage.yadada.model.vo.QuestionVO;
 import com.yage.yadada.service.AppService;
 import com.yage.yadada.service.QuestionService;
 import com.yage.yadada.service.UserService;
+import com.zhipu.oapi.service.v4.model.ModelData;
+import io.reactivex.Flowable;
+import io.reactivex.schedulers.Schedulers;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -231,30 +239,81 @@ public class QuestionController {
      * @param request
      * @return
      */
+//    @PostMapping("/edit")
+//    public BaseResponse<Boolean> editQuestion(@RequestBody QuestionEditRequest questionEditRequest, HttpServletRequest request) {
+//        if (questionEditRequest == null || questionEditRequest.getId() <= 0) {
+//            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+//        }
+//        // todo 在此处将实体类和 DTO 进行转换
+//        Question question = new Question();
+//        BeanUtils.copyProperties(questionEditRequest, question);
+//        // 数据校验
+//        questionService.validQuestion(question, false);
+//        User loginUser = userService.getLoginUser(request);
+//        // 判断是否存在
+//        long id = questionEditRequest.getId();
+//        Question oldQuestion = questionService.getById(id);
+//        ThrowUtils.throwIf(oldQuestion == null, ErrorCode.NOT_FOUND_ERROR);
+//        // 仅本人或管理员可编辑
+//        if (!oldQuestion.getUserId().equals(loginUser.getId()) && !userService.isAdmin(loginUser)) {
+//            throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
+//        }
+//        // 操作数据库
+//        boolean result = questionService.updateById(question);
+//        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+//        return ResultUtils.success(true);
+//    }
     @PostMapping("/edit")
     public BaseResponse<Boolean> editQuestion(@RequestBody QuestionEditRequest questionEditRequest, HttpServletRequest request) {
         if (questionEditRequest == null || questionEditRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        // todo 在此处将实体类和 DTO 进行转换
-        Question question = new Question();
-        BeanUtils.copyProperties(questionEditRequest, question);
-        // 数据校验
-        questionService.validQuestion(question, false);
+
+        // 1. 获取当前登录用户
         User loginUser = userService.getLoginUser(request);
-        // 判断是否存在
-        long id = questionEditRequest.getId();
+
+        // 2. 查询待更新的原数据
+        //获取题目id
+        Long id = questionEditRequest.getId();
+        //根据id查询出原数据
         Question oldQuestion = questionService.getById(id);
         ThrowUtils.throwIf(oldQuestion == null, ErrorCode.NOT_FOUND_ERROR);
-        // 仅本人或管理员可编辑
+
+        // 3. 权限校验：仅本人或管理员可编辑
         if (!oldQuestion.getUserId().equals(loginUser.getId()) && !userService.isAdmin(loginUser)) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
         }
-        // 操作数据库
-        boolean result = questionService.updateById(question);
+
+        // 4. 将 DTO 转为 Entity，并保留未修改的字段值
+        Question question = new Question();
+        BeanUtils.copyProperties(questionEditRequest, question);
+
+        // 关键修复：确保至少有一个字段需要更新
+        if (question.getQuestionContent() == null) {
+            question.setQuestionContent(oldQuestion.getQuestionContent());
+        }
+        if (question.getAppId() == null) {
+            question.setAppId(oldQuestion.getAppId());
+        }
+
+        // 5. 数据合法性校验
+        questionService.validQuestion(question, false);
+
+        // 6. 使用 UpdateWrapper 动态构建 SQL，避免空 SET 子句
+        UpdateWrapper<Question> updateWrapper = new UpdateWrapper<>();
+        updateWrapper
+                .eq("id", id)
+                .eq("isDelete", 0) // 逻辑删除条件
+                .set(question.getQuestionContent() != null, "questionContent", question.getQuestionContent())
+                .set(question.getAppId() != null, "appId", question.getAppId());
+
+        // 7. 执行更新
+        boolean result = questionService.update(updateWrapper);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
         return ResultUtils.success(true);
     }
+
 
     // endregion
 
@@ -370,4 +429,62 @@ public class QuestionController {
         return ResultUtils.success(questionContentDTOList);
     }
     // endregion
+
+    @GetMapping("/ai_generate/sse")
+    public SseEmitter aiGenerateQuestionSSE(AiGenerateQuestionRequest aiGenerateQuestionRequest) {
+        ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
+        // 获取参数
+        Long appId = aiGenerateQuestionRequest.getAppId();
+        int questionNumber = aiGenerateQuestionRequest.getQuestionNumber();
+        int optionNumber = aiGenerateQuestionRequest.getOptionNumber();
+        // 获取应用信息
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR);
+        // 封装 Prompt
+        String userMessage = getGenerateQuestionUserMessage(app, questionNumber, optionNumber);
+        // 建立 SSE 连接对象，0 表示永不超时
+        SseEmitter sseEmitter = new SseEmitter(0L);
+        // AI 生成，SSE 流式返回
+        Flowable<ModelData> modelDataFlowable = aiManager.doStreamRequest(GENERATE_QUESTION_SYSTEM_MESSAGE, userMessage, null);
+        // 左括号计数器，除了默认值外，当回归为 0 时，表示左括号等于右括号，可以截取
+        AtomicInteger counter = new AtomicInteger(0);
+        // 拼接完整题目
+        StringBuilder stringBuilder = new StringBuilder();
+        modelDataFlowable
+                .observeOn(Schedulers.io())
+                .map(modelData -> modelData.getChoices().get(0).getDelta().getContent())
+                .map(message -> message.replaceAll("\\s", ""))
+                .filter(StrUtil::isNotBlank)
+                .flatMap(message -> {
+                    List<Character> characterList = new ArrayList<>();
+                    for (char c : message.toCharArray()) {
+                        characterList.add(c);
+                    }
+                    return Flowable.fromIterable(characterList);
+                })
+                .doOnNext(c -> {
+                    // 如果是 '{'，计数器 + 1
+                    if (c == '{') {
+                        counter.addAndGet(1);
+                    }
+                    if (counter.get() > 0) {
+                        stringBuilder.append(c);
+                    }
+                    if (c == '}') {
+                        counter.addAndGet(-1);
+                        if (counter.get() == 0) {
+                            // 可以拼接题目，并且通过 SSE 返回给前端
+                            sseEmitter.send(JSONUtil.toJsonStr(stringBuilder.toString()));
+                            // 重置，准备拼接下一道题
+                            stringBuilder.setLength(0);
+                        }
+                    }
+                })
+                .doOnError((e) -> log.error("sse error", e))
+                .doOnComplete(sseEmitter::complete)
+                .subscribe();
+        return sseEmitter;
+    }
+
+
 }

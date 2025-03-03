@@ -23,4 +23,5 @@ public interface ScoringStrategy {
      * @throws Exception
      */
     UserAnswer doScore(List<String> choices, App app) throws Exception;
+
 }
