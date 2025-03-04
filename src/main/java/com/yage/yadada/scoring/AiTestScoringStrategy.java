@@ -1,9 +1,12 @@
 package com.yage.yadada.scoring;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.yage.yadada.manager.AiManager;
 import com.yage.yadada.model.dto.question.QuestionAnswerDTO;
 import com.yage.yadada.model.dto.question.QuestionContentDTO;
@@ -12,11 +15,14 @@ import com.yage.yadada.model.entity.Question;
 import com.yage.yadada.model.entity.UserAnswer;
 import com.yage.yadada.model.vo.QuestionVO;
 import com.yage.yadada.service.QuestionService;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * AI 测评类应用评分策略
@@ -32,6 +38,18 @@ public class AiTestScoringStrategy implements ScoringStrategy {
 
     @Resource
     private AiManager aiManager;
+
+    @Resource
+    private RedissonClient redissonClient;
+
+    /**
+     * AI 评分结果本地缓存
+     */
+    private final Cache<String, String> answerCacheMap =
+            Caffeine.newBuilder().initialCapacity(1024)
+                    // 缓存 5 分钟移除
+                    .expireAfterAccess(5L, TimeUnit.MINUTES)
+                    .build();
 
 
     // 分布式锁的 key
@@ -84,8 +102,8 @@ public class AiTestScoringStrategy implements ScoringStrategy {
     /**
      * 构建缓存 key
      *
-     * @param appId
-     * @param choices
+     * @param appId 应用id
+     * @param choices 题目列表
      * @return
      */
     private String buildCacheKey(Long appId, String choices) {
@@ -94,41 +112,72 @@ public class AiTestScoringStrategy implements ScoringStrategy {
 
     @Override
     public UserAnswer doScore(List<String> choices, App app) throws Exception {
+
         Long appId = app.getId();
-        //获取用户信息，题目列表
         String jsonStr = JSONUtil.toJsonStr(choices);
-        // 根据 appId 查询出题目信息
-        Question question = questionService.getOne(
-                Wrappers.lambdaQuery(Question.class).eq(Question::getAppId, appId)
-        );
-        QuestionVO questionVO = QuestionVO.objToVo(question);
-        List<QuestionContentDTO> questionContent = questionVO.getQuestionContent();
 
-        // 2.调用AI获取结果
-        // 封装prompt
-        String userMessage = getAiTestScoringUserMessage(app, questionContent, choices);
+        String cacheKey = buildCacheKey(appId, jsonStr);
+        String answerJson = answerCacheMap.getIfPresent(cacheKey);
 
-        //AI manager
-        String result = aiManager.doSyncStableRequest(AI_TEST_SCORING_SYSTEM_MESSAGE, userMessage);
 
-        // 获取需要的JSON信息
-//int start = result.indexOf("{");
-//int end = result.lastIndexOf("}");
-//String json = result.substring(start, end + 1);
+        // 如果有缓存，直接返回
+        if (StrUtil.isNotBlank(answerJson)) {
+            // 构造返回值，填充答案对象的属性
+            UserAnswer userAnswer = JSONUtil.toBean(answerJson, UserAnswer.class);
+            userAnswer.setAppId(appId);
+            userAnswer.setAppType(app.getAppType());
+            userAnswer.setScoringStrategy(app.getScoringStrategy());
+            userAnswer.setChoices(jsonStr);
+            return userAnswer;
+        }
 
-        JSONObject resultJson = JSONUtil.parseObj(result);
-        result = (String) ((JSONObject) resultJson.get("message")).get("content");
+        // 定义锁
+        RLock lock = redissonClient.getLock(AI_ANSWER_LOCK + cacheKey);
+        try {
+            // 竞争锁
+            boolean res = lock.tryLock(3, 15, TimeUnit.SECONDS);
+            // 没抢到锁，强行返回
+            if (!res) {
+                return null;
+            }
+            // 抢到锁了，执行后续业务逻辑
+            // 1. 根据 id 查询到题目
+            Question question = questionService.getOne(
+                    Wrappers.lambdaQuery(Question.class).eq(Question::getAppId, appId)
+            );
+            QuestionVO questionVO = QuestionVO.objToVo(question);
+            List<QuestionContentDTO> questionContent = questionVO.getQuestionContent();
+            // 2. 调用 AI 获取结果
+            // 封装 Prompt
+            String userMessage = getAiTestScoringUserMessage(app, questionContent, choices);
+            // AI 生成
+            String result = aiManager.doSyncStableRequest(AI_TEST_SCORING_SYSTEM_MESSAGE, userMessage);
 
-        int start = result.indexOf("{");
-        int end = result.lastIndexOf("}");
-        String json = result.substring(start, end + 1);
-        // 3. 构建返回值，填充答案对象的属性
-        UserAnswer userAnswer = JSONUtil.toBean(json, UserAnswer.class);
-        userAnswer.setAppId(appId);
-        userAnswer.setAppType(app.getAppType());
-        userAnswer.setScoringStrategy(app.getScoringStrategy());
-        userAnswer.setChoices(JSONUtil.toJsonStr(choices));
+            JSONObject resultJson = JSONUtil.parseObj(result);
+            result = (String) ((JSONObject) resultJson.get("message")).get("content");
+            System.out.println(result);
 
-        return userAnswer;
+            // 截取需要的 JSON 信息
+            int start = result.indexOf("{");
+            int end = result.lastIndexOf("}");
+            String json = result.substring(start, end + 1);
+            // 缓存结果
+            answerCacheMap.put(cacheKey, json);
+            // 3. 构造返回值，填充答案对象的属性
+            UserAnswer userAnswer = JSONUtil.toBean(json, UserAnswer.class);
+            userAnswer.setAppId(appId);
+            userAnswer.setAppType(app.getAppType());
+            userAnswer.setScoringStrategy(app.getScoringStrategy());
+            userAnswer.setChoices(jsonStr);
+            return userAnswer;
+        } finally {
+
+            if (lock != null && lock.isLocked()) {
+                if (lock.isHeldByCurrentThread()) {
+                    lock.unlock();
+                }
+            }
+
+        }
     }
 }

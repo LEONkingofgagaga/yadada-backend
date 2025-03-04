@@ -69,22 +69,21 @@ public class UserAnswerController {
     @PostMapping("/add")
     public BaseResponse<Long> addUserAnswer(@RequestBody UserAnswerAddRequest userAnswerAddRequest, HttpServletRequest request) {
         ThrowUtils.throwIf(userAnswerAddRequest == null, ErrorCode.PARAMS_ERROR);
-        // 在此处将请求实体类和 DTO 进行转换
+        // 在此处将实体类和 DTO 进行转换
         UserAnswer userAnswer = new UserAnswer();
         BeanUtils.copyProperties(userAnswerAddRequest, userAnswer);
         List<String> choices = userAnswerAddRequest.getChoices();
         userAnswer.setChoices(JSONUtil.toJsonStr(choices));
-
         // 数据校验
         userAnswerService.validUserAnswer(userAnswer, true);
-        //判断app是否存在
+        // 判断 app 是否存在
         Long appId = userAnswerAddRequest.getAppId();
         App app = appService.getById(appId);
         ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR);
-        if (!ReviewStatusEnum.getEnumByValue(app.getReviewStatus()).equals(ReviewStatusEnum.PASS)) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "应用未通过审核");
+        if (!ReviewStatusEnum.PASS.equals(ReviewStatusEnum.getEnumByValue(app.getReviewStatus()))) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "应用未通过审核，无法答题");
         }
-        // todo 填充默认值
+        // 填充默认值
         User loginUser = userService.getLoginUser(request);
         userAnswer.setUserId(loginUser.getId());
         // 写入数据库
@@ -92,19 +91,16 @@ public class UserAnswerController {
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         // 返回新写入的数据 id
         long newUserAnswerId = userAnswer.getId();
-
         // 调用评分模块
-        //Long appId = userAnswer.getAppId();
-
         try {
-            UserAnswer newAnswerWithResult = scoringStrategyExecutor.doScore(choices, app);
-            newAnswerWithResult.setId(newUserAnswerId);
-            userAnswerService.updateById(newAnswerWithResult);
+            UserAnswer userAnswerWithResult = scoringStrategyExecutor.doScore(choices, app);
+            userAnswerWithResult.setId(newUserAnswerId);
+            userAnswerWithResult.setAppId(null);
+            userAnswerService.updateById(userAnswerWithResult);
         } catch (Exception e) {
             e.printStackTrace();
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "评分错误");
         }
-
         return ResultUtils.success(newUserAnswerId);
     }
 
