@@ -2,30 +2,86 @@
 # @author <a href="https://github.com/liyupi">程序员鱼皮</a>
 # @from <a href="https://yupi.icu">编程导航知识星球</a>
 server:
+  address: 0.0.0.0
   port: 8101
+  servlet:
+    context-path: /api
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+        # 解决跨域问题
+        same-site: none
+        secure: true
+
 spring:
   # 数据库配置
   # todo 需替换配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/my_db
-    username: root
-    password: 123456
+    url: jdbc:mysql://110.42.97.122:3306/duckdb
+    username: duckDB
+    password: lyj123456
   # Redis 配置
   # todo 需替换配置
   redis:
     database: 1
-    host: localhost
+    host: 110.42.97.122
     port: 6379
     timeout: 5000
-    password: 123456
+    password: lyj123456
+  # 分库分表配置
+  shardingsphere:
+    #数据源配置
+    datasource:
+      # 多数据源以逗号隔开即可，多个数据源就是多个库
+      names: yadada
+      yadada:
+        type: com.zaxxer.hikari.HikariDataSource
+        driver-class-name: com.mysql.cj.jdbc.Driver
+        jdbc-url: jdbc:mysql://110.42.97.122:3306/duckdb
+        username: duckDB
+        password: lyj123456
+    # 规则配置
+    rules:
+      sharding:
+        # 分片算法配置
+        sharding-algorithms:
+          # 自定义分片规则名
+          answer-table-inline:
+            ## inline 类型是简单的配置文件里面就能写的类型，其他还有自定义类等等
+            type: INLINE
+            props:
+              algorithm-expression: user_answer_$->{appId % 2}
+        tables:
+          user_answer:
+            actual-data-nodes: yadada.user_answer_$->{0..1}
+            # 分表策略
+            table-strategy:
+              standard:
+                sharding-column: appId
+                sharding-algorithm-name: answer-table-inline
+
 mybatis-plus:
   configuration:
-    # 生产环境关闭日志
-    log-impl: ''
+    map-underscore-to-camel-case: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 全局逻辑删除的实体字段名
+      logic-delete-value: 1 # 逻辑已删除值（默认为 1）
+      logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+# AI配置
+ai:
+  apikey: af79be0c76564518ac50d9bd7461208d.e2imsxe7Fir41vbR
 # 接口文档配置
 knife4j:
-  basic:
-    enable: true
-    username: root
-    password: 123456
+  enable: true
+  openapi:
+    title: "接口文档"
+    version: 1.0
+    group:
+      default:
+        api-rule: package
+        api-rule-resources:
+          - com.yage.yadada.controller
