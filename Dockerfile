@@ -16,4 +16,4 @@ COPY src ./src
 RUN mvn package -DskipTests
 
 # 容器启动时运行 jar 包
-CMD ["java","-jar","/app/target/yudada-backend-0.0.1-SNAPSHOT.jar","--spring.profiles.active=prod"]
+CMD ["java","-jar","/app/target/yadada-backend-0.0.1-SNAPSHOT.jar","--spring.profiles.active=prod"]
