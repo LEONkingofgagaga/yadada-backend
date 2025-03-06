@@ -1,5 +1,6 @@
 package com.yage.yadada.controller;
 
+import cn.hutool.core.util.IdUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yage.yadada.annotation.AuthCheck;
@@ -24,8 +25,10 @@ import com.yage.yadada.service.AppService;
 import com.yage.yadada.service.UserAnswerService;
 import com.yage.yadada.service.UserService;
 import lombok.extern.slf4j.Slf4j;
+import net.bytebuddy.implementation.bytecode.Duplication;
 import net.bytebuddy.implementation.bytecode.Throw;
 import org.springframework.beans.BeanUtils;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -83,12 +86,20 @@ public class UserAnswerController {
         if (!ReviewStatusEnum.PASS.equals(ReviewStatusEnum.getEnumByValue(app.getReviewStatus()))) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "应用未通过审核，无法答题");
         }
+
+
         // 填充默认值
         User loginUser = userService.getLoginUser(request);
         userAnswer.setUserId(loginUser.getId());
-        // 写入数据库
-        boolean result = userAnswerService.save(userAnswer);
-        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
+        try {
+            // 写入数据库
+            boolean result = userAnswerService.save(userAnswer);
+            ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        }catch (DuplicateKeyException e){
+            // ignore error
+        }
+
         // 返回新写入的数据 id
         long newUserAnswerId = userAnswer.getId();
         // 调用评分模块
@@ -274,4 +285,10 @@ public class UserAnswerController {
         return ResultUtils.success(true);
     }
     // endregion
+
+    //雪花算法生成id
+    @GetMapping("/generate/id")
+    public BaseResponse<Long> generateId() {
+        return  ResultUtils.success(IdUtil.getSnowflakeNextId());
+    }
 }

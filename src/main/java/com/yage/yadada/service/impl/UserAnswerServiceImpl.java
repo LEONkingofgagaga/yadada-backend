@@ -49,18 +49,20 @@ public class UserAnswerServiceImpl extends ServiceImpl<UserAnswerMapper, UserAns
      * 校验数据
      *
      * @param userAnswer
-     * @param add      对创建的数据进行校验
+     * @param add        对创建的数据进行校验
      */
     @Override
     public void validUserAnswer(UserAnswer userAnswer, boolean add) {
         ThrowUtils.throwIf(userAnswer == null, ErrorCode.PARAMS_ERROR);
-
         // 从对象中取值
         Long appId = userAnswer.getAppId();
+        Long id = userAnswer.getId();
         // 创建数据时，参数不能为空
         if (add) {
             // 补充校验规则
-            ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR,"appId 非法");
+            ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "appId 非法");
+            ThrowUtils.throwIf(id == null || id <= 0, ErrorCode.PARAMS_ERROR, "id 非法");
+
         }
         // 修改数据时，有参数则校验
         // 补充校验规则
